@@ -43,3 +43,5 @@ crates/**/target/
 *.pyd
 
 .codegraph/
+# Git worktrees for isolated feature development
+.worktrees/
