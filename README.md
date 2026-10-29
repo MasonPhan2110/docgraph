@@ -318,6 +318,7 @@ On macOS / Windows Docker Desktop, fsevents propagation through the VirtIOFS/gRP
 
 - Symlinks are not followed (would risk indexing loops). Documented.
 - macOS fsevents can drop events under burst — the 10-minute recovery reconcile backstops this.
+- Reconcile never mass-deletes on an incomplete disk view: it skips a watched dir that is missing (unmounted drive, renamed folder), skips deletes when the scan hits read errors, and refuses to drop more than half of a dir's docs (≥10 tracked) in one pass. Live delete events are unaffected; if you really removed most files while the server was off, delete those docs from the UI or remove/re-add the watched dir. Look for `reconcile` warnings in the server log.
 - Watcher does not auth its endpoints — they inherit whatever auth ships when roadmap 3.4 lands.
 - Docker bind mounts are static — adding a new mount path (when not using the `${HOME}:/host:ro` pattern) requires `docker compose up -d` to recreate the container.
 

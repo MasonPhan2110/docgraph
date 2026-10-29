@@ -12,10 +12,20 @@ from docgraph.watch.types import WatchEvent
 
 logger = logging.getLogger(__name__)
 
+# Reconcile DELETEs are a backstop for missed fs events; live DELETE events are
+# unaffected by these guards. Refuse a batch that would drop more than this
+# share of a dir's docs (only once the dir tracks enough docs for a ratio to
+# mean anything) — far more likely a half-mounted/renamed dir than real deletes.
+MASS_DELETE_RATIO = 0.5
+MASS_DELETE_MIN_DOCS = 10
 
-def walk_watched_dir(wd: WatchedDirRecord, matcher: IgnoreMatcher) -> Iterator[Path]:
+
+def walk_watched_dir(
+    wd: WatchedDirRecord, matcher: IgnoreMatcher, errors: list[OSError] | None = None
+) -> Iterator[Path]:
     root = Path(wd.path)
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    onerror = errors.append if errors is not None else None
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=onerror):
         dp = Path(dirpath)
         # Prune ignored dirs in-place (saves recursion).
         dirnames[:] = [
@@ -31,10 +41,16 @@ def walk_watched_dir(wd: WatchedDirRecord, matcher: IgnoreMatcher) -> Iterator[P
 
 async def reconcile_dir(manager, wd: WatchedDirRecord) -> None:
     """Disk-vs-DB delta scan. Enqueues UPSERT / DELETE events directly (bypass debounce)."""
+    if not Path(wd.path).is_dir():
+        # os.walk on a missing root yields nothing, which would read as "every
+        # file deleted" and wipe the dir's docs (unmounted drive, renamed dir).
+        logger.warning("reconcile skipped: watched dir missing or not a dir: %s", wd.path)
+        return
     matcher = manager._ignore_matchers.get(wd.id) or IgnoreMatcher(wd)
     disk: dict[str, int] = {}
+    walk_errors: list[OSError] = []
     count = 0
-    for p in walk_watched_dir(wd, matcher):
+    for p in walk_watched_dir(wd, matcher, walk_errors):
         try:
             disk[str(p)] = p.stat().st_mtime_ns
         except FileNotFoundError:
@@ -50,8 +66,22 @@ async def reconcile_dir(manager, wd: WatchedDirRecord) -> None:
         prev = db_by_path.get(path)
         if prev is None or prev.mtime_ns != mtime:
             manager._enqueue_direct(WatchEvent("UPSERT", path, None))
-    for path in db_by_path.keys() - disk.keys():
-        manager._enqueue_direct(WatchEvent("DELETE", path, None))
+    missing = db_by_path.keys() - disk.keys()
+    if missing and walk_errors:
+        logger.warning(
+            "reconcile dir=%s: %d walk errors (first: %s); skipping %d deletes",
+            wd.path, len(walk_errors), walk_errors[0], len(missing),
+        )
+    elif (missing and len(db_by_path) >= MASS_DELETE_MIN_DOCS
+          and len(missing) > len(db_by_path) * MASS_DELETE_RATIO):
+        logger.warning(
+            "reconcile dir=%s: refusing to delete %d of %d docs at once; "
+            "remove them explicitly if intended",
+            wd.path, len(missing), len(db_by_path),
+        )
+    else:
+        for path in missing:
+            manager._enqueue_direct(WatchEvent("DELETE", path, None))
 
     manager.stats.reconcile_runs += 1
     from datetime import datetime, timezone
