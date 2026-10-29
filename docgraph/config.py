@@ -58,7 +58,7 @@ class Config:
     # Watcher
     watch_debounce_sec: float = 2.0
     watch_queue_capacity: int = 500
-    watch_workers: int = 4
+    watch_workers: int = 2
     watch_recovery_interval_sec: int = 600
     watch_extra_text_exts: list[str] = field(default_factory=list)
     watch_extra_binary_exts: list[str] = field(default_factory=list)

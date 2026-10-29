@@ -32,7 +32,7 @@ services:
       # File watcher knobs (defaults match config.py)
       # DOCGRAPH_WATCH_DEBOUNCE_SEC: "2.0"
       # DOCGRAPH_WATCH_QUEUE_CAPACITY: "500"
-      # DOCGRAPH_WATCH_WORKERS: "4"
+      # DOCGRAPH_WATCH_WORKERS: "2"
       # DOCGRAPH_WATCH_RECOVERY_INTERVAL_SEC: "600"
       # DOCGRAPH_WATCH_EXTRA_TEXT_EXTS: ".tf,.hcl"
       # DOCGRAPH_WATCH_EXTRA_BINARY_EXTS: ".keynote"

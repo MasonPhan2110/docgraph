@@ -128,7 +128,7 @@ def test_watcher_defaults():
     cfg = Config(data_dir=Path("/tmp"))
     assert cfg.watch_debounce_sec == 2.0
     assert cfg.watch_queue_capacity == 500
-    assert cfg.watch_workers == 4
+    assert cfg.watch_workers == 2
     assert cfg.watch_recovery_interval_sec == 600
     assert cfg.watch_extra_text_exts == []
     assert cfg.watch_extra_binary_exts == []
@@ -138,14 +138,14 @@ def test_watcher_env_overrides(monkeypatch):
     monkeypatch.setenv("DOCGRAPH_DATA_DIR", "/tmp")
     monkeypatch.setenv("DOCGRAPH_WATCH_DEBOUNCE_SEC", "1.5")
     monkeypatch.setenv("DOCGRAPH_WATCH_QUEUE_CAPACITY", "200")
-    monkeypatch.setenv("DOCGRAPH_WATCH_WORKERS", "2")
+    monkeypatch.setenv("DOCGRAPH_WATCH_WORKERS", "3")
     monkeypatch.setenv("DOCGRAPH_WATCH_RECOVERY_INTERVAL_SEC", "300")
     monkeypatch.setenv("DOCGRAPH_WATCH_EXTRA_TEXT_EXTS", ".tf,.hcl")
     monkeypatch.setenv("DOCGRAPH_WATCH_EXTRA_BINARY_EXTS", ".keynote")
     cfg = load_config()
     assert cfg.watch_debounce_sec == 1.5
     assert cfg.watch_queue_capacity == 200
-    assert cfg.watch_workers == 2
+    assert cfg.watch_workers == 3
     assert cfg.watch_recovery_interval_sec == 300
     assert cfg.watch_extra_text_exts == [".tf", ".hcl"]
     assert cfg.watch_extra_binary_exts == [".keynote"]

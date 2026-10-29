@@ -264,7 +264,7 @@ A file at the same path can exist as **two separate docs** if you both upload it
 |---|---|---:|---|
 | `DOCGRAPH_WATCH_DEBOUNCE_SEC` | `watch.debounce_sec` | `2.0` | Per-path debounce window before enqueueing |
 | `DOCGRAPH_WATCH_QUEUE_CAPACITY` | `watch.queue_capacity` | `500` | Aggregate cap across per-worker queues |
-| `DOCGRAPH_WATCH_WORKERS` | `watch.workers` | `4` | Number of async ingest workers |
+| `DOCGRAPH_WATCH_WORKERS` | `watch.workers` | `2` | Number of async ingest workers (embedding is serialized regardless; more workers only overlap file I/O + conversion) |
 | `DOCGRAPH_WATCH_RECOVERY_INTERVAL_SEC` | `watch.recovery_interval_sec` | `600` | Periodic reconcile (fsevents-drop backstop) |
 | `DOCGRAPH_WATCH_EXTRA_TEXT_EXTS` | `watch.extra_text_exts` | `[]` | Extra extensions to treat as native text |
 | `DOCGRAPH_WATCH_EXTRA_BINARY_EXTS` | `watch.extra_binary_exts` | `[]` | Extra extensions to convert as binary |
