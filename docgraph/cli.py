@@ -216,6 +216,8 @@ def main() -> None:
     stats_parser = sub.add_parser("stats", help="Index statistics")
     stats_sub = stats_parser.add_subparsers(dest="stats_command")
     stats_sub.add_parser("chunks", help="Token count distribution for indexed chunks")
+    p_watch = sub.add_parser("watch", help="manage file watcher")
+    p_watch.add_argument("watch_args", nargs=argparse.REMAINDER, help="<enable|disable|status|list|add|remove|reconcile> [args]")
     args = parser.parse_args()
     if args.command == "serve":
         _run_serve(stdio=args.stdio)
@@ -236,6 +238,11 @@ def main() -> None:
     if args.command == "stats" and args.stats_command == "chunks":
         _run_stats_chunks(cfg)
         return
+    if args.command == "watch":
+        from docgraph.cli_watch import run_watch_command
+        cfg = load_config()
+        base_url = f"http://{cfg.web_host}:{cfg.web_port}"
+        sys.exit(run_watch_command(args.watch_args, base_url))
     parser.print_help()
     sys.exit(1)
 

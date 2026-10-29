@@ -62,7 +62,15 @@ export function DocumentTable({
                 {documents.map((d) => (
                   <tr key={d.id}>
                     <td className="filename-cell">
-                      <span title={d.source_url || d.filename}>{d.filename}</span>
+                      <span title={d.watched_path || d.source_url || d.filename}>{d.filename}</span>
+                      {d.source_type === "watched" && (
+                        <span
+                          className="badge badge-watched label-mono"
+                          title={d.watched_path || undefined}
+                        >
+                          WATCHED
+                        </span>
+                      )}
                     </td>
                     <td>{d.folder || "—"}</td>
                     <td>{(d.tags || []).join(", ") || "—"}</td>

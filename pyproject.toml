@@ -21,6 +21,8 @@ crawl4ai = { version = "^0.8.6", optional = true }
 tiktoken = { version = "^0.9", optional = true }
 tree-sitter-languages = { version = "^1.10", optional = true }
 sentence-transformers = { version = "^3.4", optional = true }
+pathspec = "^0.12"
+watchdog = "^4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"

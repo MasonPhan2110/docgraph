@@ -1,13 +1,15 @@
 import { useState } from "react";
+import { FolderWatchSection } from "./FolderWatchSection";
 import { LinkImportSection } from "./LinkImportSection";
 import { UploadSection } from "./UploadSection";
 
-type IngestTab = "upload" | "web" | "code";
+type IngestTab = "upload" | "web" | "code" | "watch";
 
 const TABS: { id: IngestTab; label: string }[] = [
   { id: "upload", label: "Upload" },
   { id: "web", label: "Web pages" },
   { id: "code", label: "Code" },
+  { id: "watch", label: "Folder watch" },
 ];
 
 interface IngestTabsProps {
@@ -55,6 +57,7 @@ export function IngestTabs({ onChanged }: IngestTabsProps) {
         {tab === "code" && (
           <UploadSection embedded onUploaded={onChanged} variant="code" />
         )}
+        {tab === "watch" && <FolderWatchSection onChanged={onChanged} />}
       </div>
     </section>
   );

@@ -208,6 +208,120 @@ Then in Cursor chat:
 | `DOCGRAPH_RERANK_SCORE_GAP_RATIO` | `0.5` | Skip rerank when top-1 RRF dominates by this ratio |
 | `DOCGRAPH_RERANK_MIN_FLOOR` | `0.015` | Skip rerank when top-1 RRF score is below this floor |
 
+## File watcher (roadmap 3.1)
+
+Auto-indexes files in user-configured directories. Runtime-toggleable via Web UI, CLI, or HTTP API — no restart needed.
+
+### Quick start — Web UI
+
+Open `http://127.0.0.1:8088`, switch to the **Folder watch** tab (4th tab in the Ingest section):
+
+1. Fill in the **Add directory** form (path, folder, tags, optional ignore globs) → submit. Form rejects non-existent paths inline.
+2. Click **Enable watcher** in the status bar.
+3. Watched docs appear in the Documents table with a `[WATCHED]` badge. Hover the badge to see the full source path.
+4. Click **Reconcile** any time you suspect drift (e.g. after a batch edit on disk) — forces a disk-vs-DB delta scan.
+5. **Remove** a watched dir inline; choose to keep the indexed docs as orphans or delete them too.
+
+The status bar polls `/api/watch/status` every 2s while enabled, 5s while disabled.
+
+### Quick start — CLI
+
+```bash
+# Add a watched directory (server must be running)
+docgraph watch add ~/Notes --folder notes --tags personal
+
+# Turn the watcher on
+docgraph watch enable
+
+# Check what it's doing
+docgraph watch status
+
+# Turn it off (paths persist; re-enable later picks them up)
+docgraph watch disable
+```
+
+### How it works
+
+- **Text files** (`.md`, `.py`, `.rs`, `.json`, etc.) are referenced in place — no duplicate copy in `data_dir`.
+- **Binary files** (`.pdf`, `.docx`, `.pptx`, `.xlsx`, …) are copied into `data_dir/files/originals/` as a snapshot at index time; the converted markdown is cached and regenerated only when the source file's mtime changes.
+- **Unknown extensions** are skipped silently. Extend via `DOCGRAPH_WATCH_EXTRA_TEXT_EXTS` / `DOCGRAPH_WATCH_EXTRA_BINARY_EXTS`.
+
+### Ignore patterns
+
+Three layers compose:
+
+1. **Hardcoded defaults** — `.git`, `node_modules`, `__pycache__`, `.venv`, `.DS_Store`, `*.pyc`, `*.swp`, `*~`, etc.
+2. **`.docgraphignore`** at each watched-dir root — gitignore syntax (minus negation). Reloaded on its own mtime.
+3. **Per-dir `ignore_globs`** from the add-dir API/CLI.
+
+### Watched vs uploaded
+
+A file at the same path can exist as **two separate docs** if you both upload it via `POST /api/documents` and watch its directory. They have independent lifecycles. Watcher docs use `source_type=watched`; upload docs use `source_type=file`.
+
+### Config knobs
+
+| Env var | YAML key | Default | Purpose |
+|---|---|---:|---|
+| `DOCGRAPH_WATCH_DEBOUNCE_SEC` | `watch.debounce_sec` | `2.0` | Per-path debounce window before enqueueing |
+| `DOCGRAPH_WATCH_QUEUE_CAPACITY` | `watch.queue_capacity` | `500` | Aggregate cap across per-worker queues |
+| `DOCGRAPH_WATCH_WORKERS` | `watch.workers` | `2` | Number of async ingest workers (embedding is serialized regardless; more workers only overlap file I/O + conversion) |
+| `DOCGRAPH_WATCH_RECOVERY_INTERVAL_SEC` | `watch.recovery_interval_sec` | `600` | Periodic reconcile (fsevents-drop backstop) |
+| `DOCGRAPH_WATCH_EXTRA_TEXT_EXTS` | `watch.extra_text_exts` | `[]` | Extra extensions to treat as native text |
+| `DOCGRAPH_WATCH_EXTRA_BINARY_EXTS` | `watch.extra_binary_exts` | `[]` | Extra extensions to convert as binary |
+
+### HTTP API
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`  | `/api/watch/status` | Snapshot of watcher state, stats, queue depth |
+| `POST` | `/api/watch/enable` | Start observer + workers, run reconcile |
+| `POST` | `/api/watch/disable` | Stop observer, cancel workers, drain queue |
+| `GET`  | `/api/watch/dirs` | List watched dirs (with per-dir doc count) |
+| `POST` | `/api/watch/dirs` | Add a dir: body `{path, folder, tags, ignore_globs}` |
+| `DELETE` | `/api/watch/dirs/{wd_id}` | Remove a dir (optional `?delete_docs=true`) |
+| `POST` | `/api/watch/reconcile` | Manual reconcile across all dirs (watcher must be enabled) |
+
+### Inside Docker
+
+Docker volumes are declared at container creation, so the watcher inside the container can only see directories that have been bind-mounted into it. The easiest pattern is to mount your home directory read-only once, then add any subfolder runtime without restarting the container:
+
+```yaml
+# docker-compose.yml
+volumes:
+  - docgraph-data:/data
+  - ${HOME}:/host:ro      # entire home, read-only
+```
+
+`docker compose up -d`, then in the Web UI's **Folder watch** tab, add paths under `/host/...`:
+
+| Host path | In-container path you type in the form |
+|---|---|
+| `~/Notes` | `/host/Notes` |
+| `~/Projects/myapp` | `/host/Projects/myapp` |
+
+Read-only mounts are safe — watcher only reads files (spec §8.7 forbids writing user-owned paths). State (watched_dirs, docs, indexes) persists in `docgraph-data`, so container restarts are state-preserving.
+
+For a stricter setup, mount specific folders individually:
+
+```yaml
+volumes:
+  - docgraph-data:/data
+  - ${HOME}/Notes:/watched/notes:ro
+  - ${HOME}/Projects/docgraph:/watched/code:ro
+```
+
+Then use `/watched/notes` etc. in the form. Trade-off: adding a new path later requires editing compose + `docker compose up -d`.
+
+On macOS / Windows Docker Desktop, fsevents propagation through the VirtIOFS/gRPC FUSE layer can sometimes lag. The 10-minute recovery reconcile (config knob `DOCGRAPH_WATCH_RECOVERY_INTERVAL_SEC`) is the backstop; you can also click **Reconcile** in the UI for an immediate sync.
+
+### Known limitations
+
+- Symlinks are not followed (would risk indexing loops). Documented.
+- macOS fsevents can drop events under burst — the 10-minute recovery reconcile backstops this.
+- Reconcile never mass-deletes on an incomplete disk view: it skips a watched dir that is missing (unmounted drive, renamed folder), skips deletes when the scan hits read errors, and refuses to drop more than half of a dir's docs (≥10 tracked) in one pass. Live delete events are unaffected; if you really removed most files while the server was off, delete those docs from the UI or remove/re-add the watched dir. Look for `reconcile` warnings in the server log.
+- Watcher does not auth its endpoints — they inherit whatever auth ships when roadmap 3.4 lands.
+- Docker bind mounts are static — adding a new mount path (when not using the `${HOME}:/host:ro` pattern) requires `docker compose up -d` to recreate the container.
+
 Re-index after changing chunk settings:
 
 ```bash

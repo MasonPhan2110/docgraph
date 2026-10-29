@@ -35,5 +35,6 @@ class FileStore:
     def delete_doc_files(self, doc_id: str) -> None:
         for p in self._cfg.originals_dir.glob(f"{doc_id}_*"):
             p.unlink(missing_ok=True)
+        # NEVER touch paths outside data_dir — watched files are user-owned.
         md = self._cfg.markdown_dir / f"{doc_id}.md"
         md.unlink(missing_ok=True)

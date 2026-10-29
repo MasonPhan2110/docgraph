@@ -6,13 +6,43 @@ services:
     ports:
       - "8088:8088"
     volumes:
-      # Persist sqlite db, chroma index, uploaded files and the ONNX model cache
+      # Persist sqlite db, chroma index, uploaded files, ONNX model cache
+      # (embed + reranker both cache under /data/models)
       - docgraph-data:/data
+      # File watcher (roadmap 3.1): mount host folders read-only into
+      # /watched/* and add the in-container path via the UI or:
+      #   docker compose exec docgraph docgraph watch add /watched/notes
+      # Uncomment + adjust paths to enable.
+      # - ${HOME}/Notes:/watched/notes:ro
+      # - ${HOME}/Projects/docgraph:/watched/code:ro
     environment:
       DOCGRAPH_EMBED_PROVIDER: local
-      # Use multilingual-e5-base instead for non-English documents:
+      # Embedder model — use multilingual-e5-base for non-English docs:
       # DOCGRAPH_LOCAL_MODEL: multilingual-e5-base
+
+      # Reranker (cross-encoder, fastembed-rs). Enabled by default; lazy
+      # model load on first auto-rerank gate trigger.
+      # DOCGRAPH_RERANK_ENABLED: "true"
+      # DOCGRAPH_RERANK_TOP_N: "4"
+      # DOCGRAPH_RERANK_TIMEOUT_SEC: "15"
+      # DOCGRAPH_RERANK_PREWARM is set to "false" in the image so first
+      # boot is fast; flip to "true" to pay the model-load cost at
+      # startup instead of on first reranked query.
+
+      # File watcher knobs (defaults match config.py)
+      # DOCGRAPH_WATCH_DEBOUNCE_SEC: "2.0"
+      # DOCGRAPH_WATCH_QUEUE_CAPACITY: "500"
+      # DOCGRAPH_WATCH_WORKERS: "2"
+      # DOCGRAPH_WATCH_RECOVERY_INTERVAL_SEC: "600"
+      # DOCGRAPH_WATCH_EXTRA_TEXT_EXTS: ".tf,.hcl"
+      # DOCGRAPH_WATCH_EXTRA_BINARY_EXTS: ".keynote"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8088/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
 volumes:
   docgraph-data:

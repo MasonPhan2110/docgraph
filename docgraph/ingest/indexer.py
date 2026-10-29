@@ -337,6 +337,21 @@ class Indexer:
             )
             raise
 
+    async def index_text_direct(self, doc_id: str, text: str) -> None:
+        """Chunk + index raw text without conversion. For native-text files."""
+        doc = self._sqlite.get_document(doc_id)
+        if doc is None:
+            raise ValueError(f"document not found: {doc_id}")
+        logger.info("indexing text-direct doc_id=%s chars=%d", doc_id, len(text))
+        try:
+            self._progress(doc_id, 20, "Skipping conversion — native text (20%)")
+            await self.index_markdown(doc_id, text)
+        except Exception as exc:
+            self._sqlite.update_status(
+                doc_id, DocumentStatus.ERROR, error_message=str(exc),
+            )
+            raise
+
     async def index_url(
         self,
         doc_id: str,
@@ -401,6 +416,90 @@ class Indexer:
                 except Exception:
                     logger.exception("failed to mark doc %s as ERROR", doc_id)
 
+    async def index_watched_new(
+        self,
+        doc_id: str,
+        watched_path: Path,
+        wd,  # WatchedDirRecord
+        materialize: bool,
+        mtime_ns: int,
+    ) -> None:
+        """First-time index of a file discovered in a watched dir."""
+        from docgraph.models import DocumentRecord, SourceType
+        doc = DocumentRecord(
+            id=doc_id,
+            filename=watched_path.name,
+            folder=wd.folder,
+            tags=list(wd.tags),
+            source_type=SourceType.WATCHED,
+            watched_path=str(watched_path),
+            materialize=materialize,
+            mtime_ns=mtime_ns,
+            original_path="",
+        )
+        # Pre-insert before any file I/O so OSError below can mark doc ERROR.
+        self._sqlite.insert_document(doc)
+        self._sqlite.update_progress(doc_id, 0, "Queued for watched-index (0%)")
+        try:
+            if materialize:
+                content = await asyncio.to_thread(watched_path.read_bytes)
+                orig_path = self._files.save_original(doc_id, watched_path.name, content)
+                self._sqlite.update_original_path(doc_id, str(orig_path))
+                await self.index_document(doc_id, orig_path)
+            else:
+                text = await asyncio.to_thread(
+                    watched_path.read_text, encoding="utf-8", errors="ignore"
+                )
+                await self.index_text_direct(doc_id, text)
+        except OSError as exc:
+            # Permission denied, disk full, file vanished mid-read — surface
+            # to user as ERROR rather than leaving doc PROCESSING forever.
+            self._sqlite.update_status(
+                doc_id, DocumentStatus.ERROR, error_message=str(exc),
+            )
+            raise
+        # The underlying index_* methods set status READY with proper
+        # chunk_count + markdown_path. Do NOT re-call update_status here —
+        # the default kwargs would zero those fields (see code review #9).
+        self._sqlite.update_mtime_ns(doc_id, mtime_ns)
+
+    async def reindex_watched(
+        self,
+        doc_id: str,
+        watched_path: Path,
+        materialize: bool,
+        mtime_ns: int,
+    ) -> None:
+        """Re-run ingest for an existing watched doc. claim_for_reindex must be called first."""
+        self._chroma.delete_by_doc_id(doc_id)
+        if self._fts is not None:
+            try:
+                self._fts.delete_by_doc_id(doc_id)
+            except Exception as exc:
+                logger.warning("FTS5 delete failed for doc_id=%s: %s", doc_id, exc)
+        self._progress(doc_id, 0, "Re-indexing watched file (0%)")
+        try:
+            if materialize:
+                doc = self._sqlite.get_document(doc_id)
+                old_orig = Path(doc.original_path) if doc.original_path else None
+                content = await asyncio.to_thread(watched_path.read_bytes)
+                new_orig = self._files.save_original(doc_id, watched_path.name, content)
+                self._sqlite.update_original_path(doc_id, str(new_orig))
+                if old_orig and old_orig != new_orig and old_orig.exists():
+                    old_orig.unlink(missing_ok=True)
+                await self.index_document(doc_id, new_orig)
+            else:
+                text = await asyncio.to_thread(
+                    watched_path.read_text, encoding="utf-8", errors="ignore"
+                )
+                await self.index_text_direct(doc_id, text)
+        except OSError as exc:
+            self._sqlite.update_status(
+                doc_id, DocumentStatus.ERROR, error_message=str(exc),
+            )
+            raise
+        self._sqlite.update_mtime_ns(doc_id, mtime_ns)
+
     async def reindex_document(self, doc_id: str) -> None:
         doc = self._sqlite.get_document(doc_id)
         if doc is None:
@@ -416,7 +515,13 @@ class Indexer:
                 logger.warning("FTS5 delete failed for doc_id=%s: %s", doc_id, exc)
         self._sqlite.update_status(doc_id, DocumentStatus.PROCESSING)
         self._progress(doc_id, 0, "Starting re-index (0%)")
-        if doc.source_type == SourceType.URL and doc.source_url:
+        if doc.source_type == SourceType.WATCHED and doc.watched_path:
+            wp = Path(doc.watched_path)
+            if not wp.exists():
+                raise ValueError(f"watched file gone: {doc.watched_path}")
+            mtime_ns = wp.stat().st_mtime_ns
+            await self.reindex_watched(doc_id, wp, bool(doc.materialize), mtime_ns)
+        elif doc.source_type == SourceType.URL and doc.source_url:
             await self.index_url(doc_id, doc.source_url)
         elif doc.original_path:
             await self.index_document(doc_id, Path(doc.original_path))

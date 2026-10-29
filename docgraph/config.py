@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +55,13 @@ class Config:
     # Auto-rerank gate
     rerank_score_gap_ratio: float = 0.5
     rerank_min_floor: float = 0.015
+    # Watcher
+    watch_debounce_sec: float = 2.0
+    watch_queue_capacity: int = 500
+    watch_workers: int = 2
+    watch_recovery_interval_sec: int = 600
+    watch_extra_text_exts: list[str] = field(default_factory=list)
+    watch_extra_binary_exts: list[str] = field(default_factory=list)
 
     @property
     def sqlite_path(self) -> Path:
@@ -101,6 +108,14 @@ class Config:
         if self.rerank_timeout_sec <= 0:
             raise ValueError(
                 f"rerank_timeout_sec must be > 0, got {self.rerank_timeout_sec}"
+            )
+        if not (1 <= self.watch_workers <= 32):
+            raise ValueError(f"watch_workers must be in [1, 32], got {self.watch_workers}")
+        if self.watch_debounce_sec <= 0:
+            raise ValueError(f"watch_debounce_sec must be > 0, got {self.watch_debounce_sec}")
+        if self.watch_queue_capacity < self.watch_workers:
+            raise ValueError(
+                f"watch_queue_capacity ({self.watch_queue_capacity}) must be >= watch_workers ({self.watch_workers})"
             )
 
 
@@ -156,6 +171,17 @@ def _apply_yaml(cfg: Config, data: dict[str, Any]) -> None:
                 cfg.rerank_min_floor = float(
                     gate.get("min_floor", cfg.rerank_min_floor)
                 )
+    if watch := data.get("watch"):
+        cfg.watch_debounce_sec = float(watch.get("debounce_sec", cfg.watch_debounce_sec))
+        cfg.watch_queue_capacity = int(watch.get("queue_capacity", cfg.watch_queue_capacity))
+        cfg.watch_workers = int(watch.get("workers", cfg.watch_workers))
+        cfg.watch_recovery_interval_sec = int(
+            watch.get("recovery_interval_sec", cfg.watch_recovery_interval_sec)
+        )
+        if extra_text := watch.get("extra_text_exts"):
+            cfg.watch_extra_text_exts = list(extra_text)
+        if extra_bin := watch.get("extra_binary_exts"):
+            cfg.watch_extra_binary_exts = list(extra_bin)
 
 
 def _apply_env(cfg: Config) -> None:
@@ -221,6 +247,18 @@ def _apply_env(cfg: Config) -> None:
         cfg.rerank_score_gap_ratio = float(v)
     if v := os.getenv("DOCGRAPH_RERANK_MIN_FLOOR"):
         cfg.rerank_min_floor = float(v)
+    if v := os.getenv("DOCGRAPH_WATCH_DEBOUNCE_SEC"):
+        cfg.watch_debounce_sec = float(v)
+    if v := os.getenv("DOCGRAPH_WATCH_QUEUE_CAPACITY"):
+        cfg.watch_queue_capacity = int(v)
+    if v := os.getenv("DOCGRAPH_WATCH_WORKERS"):
+        cfg.watch_workers = int(v)
+    if v := os.getenv("DOCGRAPH_WATCH_RECOVERY_INTERVAL_SEC"):
+        cfg.watch_recovery_interval_sec = int(v)
+    if v := os.getenv("DOCGRAPH_WATCH_EXTRA_TEXT_EXTS"):
+        cfg.watch_extra_text_exts = [e.strip() for e in v.split(",") if e.strip()]
+    if v := os.getenv("DOCGRAPH_WATCH_EXTRA_BINARY_EXTS"):
+        cfg.watch_extra_binary_exts = [e.strip() for e in v.split(",") if e.strip()]
 
 
 def load_config() -> Config:

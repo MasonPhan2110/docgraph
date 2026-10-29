@@ -14,6 +14,7 @@ class DocumentStatus(str, Enum):
 class SourceType(str, Enum):
     FILE = "file"
     URL = "url"
+    WATCHED = "watched"
 
 
 @dataclass
@@ -31,6 +32,10 @@ class DocumentRecord:
     markdown_path: str = ""
     source_type: SourceType = SourceType.FILE
     source_url: str = ""
+    # Watched-file fields (None for FILE/URL docs)
+    watched_path: Optional[str] = None
+    materialize: Optional[bool] = None
+    mtime_ns: Optional[int] = None
 
 
 @dataclass
@@ -63,3 +68,13 @@ class SearchResult:
     file_path: Optional[str] = None
     heading_path: Optional[list[str]] = None
     rerank_score: Optional[float] = None
+
+
+@dataclass
+class WatchedDirRecord:
+    id: str
+    path: str
+    folder: str = ""
+    tags: list[str] = field(default_factory=list)
+    ignore_globs: list[str] = field(default_factory=list)
+    created_at: str = ""

@@ -6,7 +6,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-EMBED_BATCH_SIZE = 64
+# ONNX Runtime's CPU arena grows to fit the largest batch and never shrinks.
+# Measured on nomic-embed-text with ~512-token chunks: bs=4 plateaus at ~1.5 GB
+# RSS vs ~3.5 GB at bs=16 and ~5 GB at bs=64, at the same ~2.6 chunks/s.
+EMBED_BATCH_SIZE = 4
 
 
 class LocalEmbedder:
@@ -21,6 +24,10 @@ class LocalEmbedder:
         self._model = model
         self._cache_dir = cache_dir
         self._init_lock = asyncio.Lock()
+        # ONNX already uses every core per call, so concurrent callers (watcher
+        # workers, uploads, queries) gain no throughput — they only stack peak
+        # memory. Serialize per batch so a long document can't starve queries.
+        self._infer_lock = asyncio.Lock()
         self._initialized = False
 
     def _import_native(self):
@@ -62,7 +69,8 @@ class LocalEmbedder:
         all_vectors: list[list[float]] = []
         for start in range(0, len(prepared), EMBED_BATCH_SIZE):
             batch = prepared[start : start + EMBED_BATCH_SIZE]
-            rows = await asyncio.to_thread(native.embed, batch)
+            async with self._infer_lock:
+                rows = await asyncio.to_thread(native.embed, batch)
             all_vectors.extend(rows)
         return all_vectors
 

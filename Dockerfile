@@ -15,7 +15,9 @@ RUN npm run build
 
 
 # ──────────────────────────────────────────────────────────────
-# Stage 2: build Rust embedder + install Python deps into a venv
+# Stage 2: build Rust embedder (powers embed + reranker via
+# fastembed-rs) + install Python deps (watchdog/pathspec for the
+# file watcher pull in via poetry) into a venv
 # ──────────────────────────────────────────────────────────────
 FROM python:3.12-bookworm AS builder
 
@@ -67,7 +69,14 @@ ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     DOCGRAPH_DATA_DIR=/data \
     DOCGRAPH_WEB_HOST=0.0.0.0 \
-    DOCGRAPH_WEB_PORT=8088
+    DOCGRAPH_WEB_PORT=8088 \
+    # Reranker model loads lazily on first /search rerank call; cached in
+    # /data/models (volume) so subsequent boots reuse the ONNX file.
+    DOCGRAPH_RERANK_PREWARM=false
+
+# curl needed for HEALTHCHECK below.
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -76,7 +85,13 @@ COPY --from=builder /app/docgraph ./docgraph
 COPY pyproject.toml README.md ./
 
 # Persisted data: sqlite db, chroma index, uploaded files, ONNX model cache
+# (embed + reranker share /data/models). Mount additional host folders
+# read-only into /watched/* if you want the watcher to track them — see
+# docker-compose.yml for the pattern.
 VOLUME ["/data"]
 EXPOSE 8088
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8088/api/health || exit 1
 
 CMD ["docgraph", "serve"]
