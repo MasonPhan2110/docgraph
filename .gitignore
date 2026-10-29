@@ -45,3 +45,5 @@ crates/**/target/
 .codegraph/
 # Git worktrees for isolated feature development
 .worktrees/
+
+.superpowers/

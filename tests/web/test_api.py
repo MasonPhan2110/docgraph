@@ -107,3 +107,33 @@ async def test_import_urls_rejects_empty(app):
             json={"urls": "  \n# only comments\n"},
         )
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_search_endpoint_forwards_filters(app, monkeypatch):
+    from docgraph.models import SearchResult
+
+    calls = {}
+
+    class FakeSearch:
+        async def search(self, query, top_k=None, folder=None, tags=None):
+            calls.update(query=query, top_k=top_k, folder=folder, tags=tags)
+            return [SearchResult(text="hit", doc_id="d1", filename="a.md", folder=folder,
+                                 tags=tags, chunk_index=0, score=0.9)]
+
+    monkeypatch.setattr(app.state.docgraph, "search_service", lambda: FakeSearch())
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/search", json={
+            "query": "thesis", "tags": ["FPT.VN"], "folder": "tradingagents", "top_k": 7})
+    assert resp.status_code == 200
+    assert calls == {"query": "thesis", "top_k": 7, "folder": "tradingagents", "tags": ["FPT.VN"]}
+    assert resp.json()["results"][0]["doc_id"] == "d1"
+
+
+@pytest.mark.asyncio
+async def test_search_endpoint_rejects_empty_query(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/search", json={"query": "  "})
+    assert resp.status_code == 400

@@ -41,6 +41,13 @@ class ImportUrlsBody(BaseModel):
     tags: str = ""
 
 
+class SearchBody(BaseModel):
+    query: str
+    tags: list[str] | None = None
+    folder: str | None = None
+    top_k: int | None = None
+
+
 async def _run_index(state: AppState, doc_id: str, original_path: Path) -> None:
     # index_document already records ERROR status to SQLite; we log so operators
     # see the traceback rather than only the truncated DB error_message.
@@ -286,6 +293,32 @@ def create_app(
         if st.fts is not None:
             st.fts.update_doc_metadata(doc_id, folder, tag_list)
         return {"doc_id": doc_id, "folder": folder, "tags": tag_list}
+
+    @app.post("/api/search")
+    async def search(request: Request, body: SearchBody):
+        """The MCP `search_documents` tool over plain HTTP, for non-MCP clients."""
+        st: AppState = request.app.state.docgraph
+        if not body.query.strip():
+            raise HTTPException(status_code=400, detail="query required")
+        try:
+            results = await st.search_service().search(
+                query=body.query, top_k=body.top_k, folder=body.folder, tags=body.tags
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"results": [
+            {
+                "text": r.text,
+                "doc_id": r.doc_id,
+                "filename": r.filename,
+                "folder": r.folder,
+                "tags": r.tags,
+                "chunk_index": r.chunk_index,
+                "score": round(r.score, 4),
+                "heading_path": r.heading_path or [],
+            }
+            for r in results
+        ]}
 
     @app.post("/api/documents/{doc_id}/reindex", status_code=202)
     async def reindex_document(
