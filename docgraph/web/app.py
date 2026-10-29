@@ -145,6 +145,11 @@ async def _lifespan(app: FastAPI):
                 "Run `docgraph rebuild-fts` to fix.",
                 chroma_n, fts_n,
             )
+    # No indexing task exists yet, so any watched doc still PROCESSING was cut
+    # off by a previous crash/kill; release it before reconcile runs.
+    n_reset = state.sqlite.reset_interrupted_watched_docs()
+    if n_reset:
+        logger.warning("watcher: reset %d watched docs interrupted mid-index", n_reset)
     # Auto-enable watcher if persisted state says so.
     persisted = state.sqlite.get_watcher_state("enabled")
     if persisted == "true":
@@ -156,10 +161,10 @@ async def _lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # Disable watcher cleanly on shutdown.
+        # Stop watcher on shutdown without persisting "disabled".
         try:
             if state.watcher.state.value == "enabled":
-                await state.watcher.disable()
+                await state.watcher.disable(persist=False)
         except Exception:
             logger.exception("watcher disable on shutdown failed")
 

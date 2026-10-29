@@ -188,3 +188,27 @@ def test_update_mtime_ns(cfg: Config):
     store.update_mtime_ns("d1", 999)
     got = store.get_doc_by_watched_path("/tmp/a.md")
     assert got.mtime_ns == 999
+
+
+def test_reset_interrupted_watched_docs(cfg: Config):
+    """A watched doc left PROCESSING by a crash already has mtime_ns recorded, so
+    reconcile would skip it forever. Reset must clear mtime and leave it claimable."""
+    store = SQLiteStore(cfg)
+    store.init_schema()
+    _make_watched_doc(store, "stuck", "/tmp/notes/a.md", 1000)
+    store.update_status("stuck", DocumentStatus.PROCESSING)
+    _make_watched_doc(store, "done", "/tmp/notes/b.md", 2000)
+    store.insert_document(DocumentRecord(
+        id="upload", filename="u.md", folder="", tags=[], status=DocumentStatus.PROCESSING,
+    ))
+
+    assert store.reset_interrupted_watched_docs() == 1
+
+    stuck = store.get_document("stuck")
+    assert stuck.status == DocumentStatus.ERROR
+    assert stuck.mtime_ns is None
+    assert stuck.error_message
+    assert store.claim_for_reindex("stuck") is True
+    assert store.get_document("done").status == DocumentStatus.READY
+    assert store.get_document("done").mtime_ns == 2000
+    assert store.get_document("upload").status == DocumentStatus.PROCESSING

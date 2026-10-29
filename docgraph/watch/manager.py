@@ -94,7 +94,9 @@ class WatcherManager:
                 self.state = WatcherState.DISABLED
                 raise
 
-    async def disable(self) -> dict:
+    async def disable(self, *, persist: bool = True) -> dict:
+        """Stop the watcher. persist=False (server shutdown) keeps the stored
+        enabled flag so the next startup auto-enables again."""
         if self.state == WatcherState.DISABLED:
             return {"enabled": False, "queue_drained": 0, "queue_dropped": 0}
         if self.state in (WatcherState.ENABLING, WatcherState.DISABLING):
@@ -124,7 +126,8 @@ class WatcherManager:
                 if self._recovery_task is not None:
                     self._recovery_task.cancel()
                     self._recovery_task = None
-                self._sqlite.set_watcher_state("enabled", "false")
+                if persist:
+                    self._sqlite.set_watcher_state("enabled", "false")
                 self.state = WatcherState.DISABLED
                 logger.info("watcher: disabled, queue_drained=%d", drained)
                 return {"enabled": False, "queue_drained": drained, "queue_dropped": self.stats.events_dropped_queue_full}

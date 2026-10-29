@@ -371,6 +371,26 @@ class SQLiteStore:
                 (new_path, doc_id),
             )
 
+    def reset_interrupted_watched_docs(self) -> int:
+        """Release watched docs left PROCESSING by a crash/kill mid-index.
+
+        Only safe at startup, before any indexing task exists. Clearing mtime_ns
+        makes the next reconcile see a delta and re-UPSERT; ERROR status lets
+        claim_for_reindex take the slot.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE documents SET status=?, mtime_ns=NULL, "
+                "error_message='interrupted: server stopped mid-index' "
+                "WHERE source_type=? AND status=?",
+                (
+                    DocumentStatus.ERROR.value,
+                    SourceType.WATCHED.value,
+                    DocumentStatus.PROCESSING.value,
+                ),
+            )
+            return cur.rowcount
+
     def update_mtime_ns(self, doc_id: str, mtime_ns: int) -> None:
         with self._connect() as conn:
             conn.execute(

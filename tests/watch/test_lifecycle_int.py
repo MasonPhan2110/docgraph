@@ -64,3 +64,39 @@ async def test_stats_reset_on_enable(setup):
     await mgr.enable()
     assert mgr.stats.events_received == 0
     await mgr.disable()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_disable_keeps_persisted_state(setup):
+    """Server shutdown stops the watcher but must not flip the persisted flag,
+    or every graceful restart silently turns the watcher off."""
+    state, watched = setup
+    mgr = WatcherManager(state)
+    await mgr.enable()
+    await mgr.disable(persist=False)
+    assert mgr.state.value == "disabled"
+    assert state.sqlite.get_watcher_state("enabled") == "true"
+
+
+@pytest.mark.asyncio
+async def test_interrupted_doc_is_reindexed_after_reset(setup):
+    from docgraph.models import DocumentRecord, DocumentStatus, SourceType
+
+    state, watched = setup
+    f = watched / "a.md"
+    f.write_text("# hello")
+    state.sqlite.insert_document(DocumentRecord(
+        id="doc_stuck", filename="a.md", folder="", tags=[],
+        source_type=SourceType.WATCHED, status=DocumentStatus.PROCESSING,
+        watched_path=str(f), materialize=False, mtime_ns=f.stat().st_mtime_ns,
+    ))
+    state.sqlite.reset_interrupted_watched_docs()
+
+    mgr = WatcherManager(state)
+    await mgr.enable()
+    for _ in range(50):
+        if state.sqlite.get_document("doc_stuck").status == DocumentStatus.READY:
+            break
+        await asyncio.sleep(0.05)
+    await mgr.disable()
+    assert state.sqlite.get_document("doc_stuck").status == DocumentStatus.READY
